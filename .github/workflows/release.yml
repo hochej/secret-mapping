@@ -83,20 +83,21 @@ jobs:
         run: go build -o hogwash .
 
       - name: Generate datasets
+        id: generate
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
 
-          # Full export (all data, for exploration/debugging)
+          # Full export — capture stderr for stats
           ./hogwash \
             -trufflehog ./trufflehog/pkg/detectors/ \
             -gitleaks ./gitleaks/config/gitleaks.toml \
             -mode full \
             -out dist/secret-mapping.full.json \
-            -force
+            -force 2> dist/full-stderr.txt
 
-          # Gondolin export (slim, for pi-gondolin.ts consumption)
+          # Gondolin export
           ./hogwash \
             -trufflehog ./trufflehog/pkg/detectors/ \
             -gitleaks ./gitleaks/config/gitleaks.toml \
@@ -107,9 +108,23 @@ jobs:
           sha256sum dist/secret-mapping.full.json     | awk '{print $1}' > dist/secret-mapping.full.json.sha256
           sha256sum dist/secret-mapping.gondolin.json  | awk '{print $1}' > dist/secret-mapping.gondolin.json.sha256
 
-          TH_SHA=$(git -C trufflehog rev-parse HEAD)
-          GL_SHA=$(git -C gitleaks rev-parse HEAD)
+          TH_SHA=$(git -C trufflehog rev-parse --short HEAD)
+          GL_SHA=$(git -C gitleaks rev-parse --short HEAD)
+          TH_SHA_FULL=$(git -C trufflehog rev-parse HEAD)
+          GL_SHA_FULL=$(git -C gitleaks rev-parse HEAD)
           SELF_SHA=$(git rev-parse HEAD)
+
+          # Extract stats from stderr
+          TOTAL_SERVICES=$(grep 'Total services:' dist/full-stderr.txt | grep -oE '[0-9]+' | head -1)
+          SERVICES_WITH_HOSTS=$(grep 'With hosts+rules:' dist/full-stderr.txt | grep -oE '[0-9]+' | head -1)
+          TOTAL_RULES=$(grep 'Total GL rules:' dist/full-stderr.txt | grep -oE '[0-9]+' | head -1)
+
+          # Write outputs for release step
+          echo "th_sha=${TH_SHA}" >> "$GITHUB_OUTPUT"
+          echo "gl_sha=${GL_SHA}" >> "$GITHUB_OUTPUT"
+          echo "total_services=${TOTAL_SERVICES}" >> "$GITHUB_OUTPUT"
+          echo "services_with_hosts=${SERVICES_WITH_HOSTS}" >> "$GITHUB_OUTPUT"
+          echo "total_rules=${TOTAL_RULES}" >> "$GITHUB_OUTPUT"
 
           cat > dist/metadata.json <<EOF
           {
@@ -120,8 +135,8 @@ jobs:
               "sha": "${SELF_SHA}"
             },
             "sources": {
-              "trufflehog": {"repo": "trufflesecurity/trufflehog", "sha": "${TH_SHA}"},
-              "gitleaks": {"repo": "gitleaks/gitleaks", "sha": "${GL_SHA}"}
+              "trufflehog": {"repo": "trufflesecurity/trufflehog", "sha": "${TH_SHA_FULL}"},
+              "gitleaks": {"repo": "gitleaks/gitleaks", "sha": "${GL_SHA_FULL}"}
             }
           }
           EOF
@@ -145,12 +160,30 @@ jobs:
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
 
+          NOTES="Auto-generated from upstream sources.
+
+          | Source | Commit |
+          |--------|--------|
+          | gitleaks | \`${{ steps.generate.outputs.gl_sha }}\` |
+          | trufflehog | \`${{ steps.generate.outputs.th_sha }}\` |
+
+          **Stats**
+
+          | | |
+          |--|--|
+          | Total services | ${{ steps.generate.outputs.total_services }} |
+          | Services with hosts | ${{ steps.generate.outputs.services_with_hosts }} |
+          | Total regex rules | ${{ steps.generate.outputs.total_rules }} |"
+
+          # Dedent (heredoc indentation)
+          NOTES=$(echo "$NOTES" | sed 's/^          //')
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release exists: $TAG"
+            gh release edit "$TAG" --notes "$NOTES"
           else
             gh release create "$TAG" \
               --title "$TAG" \
-              --notes "Automated export from TruffleHog + Gitleaks." \
+              --notes "$NOTES" \
               --verify-tag
           fi
 
