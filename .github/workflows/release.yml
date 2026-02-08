@@ -110,13 +110,13 @@ jobs:
             -out dist/secret-mapping.full.json \
             -force 2> dist/full-stderr.txt
 
-          # Gondolin export
+          # Gondolin export — capture stderr for stats
           ./hogwash \
             -trufflehog ./trufflehog/pkg/detectors/ \
             -gitleaks ./gitleaks/config/gitleaks.toml \
             -mode gondolin \
             -out dist/secret-mapping.gondolin.json \
-            -force
+            -force 2> dist/gondolin-stderr.txt
 
           sha256sum dist/secret-mapping.full.json     | awk '{print $1}' > dist/secret-mapping.full.json.sha256
           sha256sum dist/secret-mapping.gondolin.json  | awk '{print $1}' > dist/secret-mapping.gondolin.json.sha256
@@ -132,12 +132,22 @@ jobs:
           SERVICES_WITH_HOSTS=$(grep 'With hosts+rules:' dist/full-stderr.txt | grep -oE '[0-9]+' | head -1)
           TOTAL_RULES=$(grep 'Total GL rules:' dist/full-stderr.txt | grep -oE '[0-9]+' | head -1)
 
+          # Extract gondolin stats from stderr
+          KEYWORD_HOSTS=$(grep 'Keyword.*host mappings:' dist/gondolin-stderr.txt | grep -oE '[0-9]+')
+          EXACT_NAME_HOSTS=$(grep 'Exact-name mappings:' dist/gondolin-stderr.txt | grep -oE '[0-9]+')
+          VALUE_PATTERNS=$(grep 'Value patterns:' dist/gondolin-stderr.txt | grep -oE '[0-9]+' | head -1)
+          LINKED_PATTERNS=$(grep 'Value patterns:' dist/gondolin-stderr.txt | grep -oE '[0-9]+' | tail -1)
+
           # Write outputs for release step
           echo "th_sha=${TH_SHA}" >> "$GITHUB_OUTPUT"
           echo "gl_sha=${GL_SHA}" >> "$GITHUB_OUTPUT"
           echo "total_services=${TOTAL_SERVICES}" >> "$GITHUB_OUTPUT"
           echo "services_with_hosts=${SERVICES_WITH_HOSTS}" >> "$GITHUB_OUTPUT"
           echo "total_rules=${TOTAL_RULES}" >> "$GITHUB_OUTPUT"
+          echo "keyword_hosts=${KEYWORD_HOSTS}" >> "$GITHUB_OUTPUT"
+          echo "exact_name_hosts=${EXACT_NAME_HOSTS}" >> "$GITHUB_OUTPUT"
+          echo "value_patterns=${VALUE_PATTERNS}" >> "$GITHUB_OUTPUT"
+          echo "linked_patterns=${LINKED_PATTERNS}" >> "$GITHUB_OUTPUT"
 
           cat > dist/metadata.json <<EOF
           {
@@ -183,7 +193,8 @@ jobs:
           | gitleaks | [\`${GL_SHA}\`](https://github.com/gitleaks/gitleaks/commit/${GL_SHA}) |
           | trufflehog | [\`${TH_SHA}\`](https://github.com/trufflesecurity/trufflehog/commit/${TH_SHA}) |
 
-          **Stats:** ${{ steps.generate.outputs.total_services }} services, ${{ steps.generate.outputs.services_with_hosts }} with hosts, ${{ steps.generate.outputs.total_rules }} regex rules"
+          **Full:** ${{ steps.generate.outputs.total_services }} services, ${{ steps.generate.outputs.services_with_hosts }} with hosts, ${{ steps.generate.outputs.total_rules }} regex rules
+          **Gondolin:** ${{ steps.generate.outputs.keyword_hosts }} keyword→host, ${{ steps.generate.outputs.exact_name_hosts }} exact-name→host, ${{ steps.generate.outputs.value_patterns }} value patterns (${{ steps.generate.outputs.linked_patterns }} with host linkage)"
 
           # Dedent (heredoc indentation)
           NOTES=$(echo "$NOTES" | sed 's/^          //')
