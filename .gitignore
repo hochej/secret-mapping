@@ -1,5 +1,10 @@
+hogwash
 secret-detector-export
 *.exe
 combined-output.json
+*.json
+!go.sum
 gitleaks/
 trufflehog/
+dist/
+.pi/
