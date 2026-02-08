@@ -53,6 +53,9 @@ func extractGitleaksRules(tomlPath string) ([]GLRule, error) {
 
 	var rules []GLRule
 	for _, r := range cfg.Rules {
+		if r.SkipReport {
+			continue // respect Gitleaks "skipReport" (typically noisy/informational rules)
+		}
 		if strings.TrimSpace(r.Regex) == "" {
 			continue // skip path-only rules
 		}

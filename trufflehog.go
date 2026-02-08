@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -199,7 +200,7 @@ func buildCommentRanges(fset *token.FileSet, file *ast.File) []commentRange {
 func inComment(fset *token.FileSet, pos token.Pos, ranges []commentRange) bool {
 	off := fset.Position(pos).Offset
 	for _, r := range ranges {
-		if off >= r.start && off <= r.end {
+		if off >= r.start && off < r.end {
 			return true
 		}
 	}
@@ -233,9 +234,35 @@ var validHostRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\
 
 func isNoiseHost(host string) bool {
 	host = strings.ToLower(host)
+	if host == "" {
+		return true
+	}
+	if host == "localhost" {
+		return true
+	}
 	if host == "howtorotate.com" || host == "github.com" || strings.HasSuffix(host, "fsf.org") {
 		return true
 	}
+
+	// Reject IP literals and common non-routable ranges to avoid propagating
+	// potentially unsafe verification targets (SSRF in downstream users).
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+			return true
+		}
+	}
+
+	// Filter out internal-only namespaces.
+	internalSuffixes := []string{
+		".local", ".localdomain", ".internal", ".lan", ".home",
+		".svc", ".cluster.local", ".svc.cluster.local",
+	}
+	for _, s := range internalSuffixes {
+		if strings.HasSuffix(host, s) {
+			return true
+		}
+	}
+
 	// Filter out hostnames that aren't valid DNS names (e.g., regex fragments
 	// like "(" from URLs embedded in regexp patterns)
 	if !validHostRe.MatchString(host) {

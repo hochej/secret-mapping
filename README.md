@@ -20,6 +20,7 @@ go build -o secret-detector-export .
   -trufflehog ./trufflehog/pkg/detectors/ \
   -gitleaks ./gitleaks/config/gitleaks.toml \
   -out combined-output.json
+# add -force to overwrite an existing output file
 ```
 
 ## Output

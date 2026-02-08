@@ -23,6 +23,7 @@ func main() {
 	thDir := flag.String("trufflehog", "", "Path to trufflehog/pkg/detectors/")
 	glPath := flag.String("gitleaks", "", "Path to gitleaks/config/gitleaks.toml")
 	outPath := flag.String("out", "-", "Output file path (or - for stdout)")
+	force := flag.Bool("force", false, "Overwrite -out if it already exists")
 	flag.Parse()
 
 	if *thDir == "" && *glPath == "" {
@@ -60,6 +61,13 @@ func main() {
 	if *outPath == "-" {
 		out = os.Stdout
 	} else {
+		if !*force {
+			if _, err := os.Stat(*outPath); err == nil {
+				exitErr(fmt.Errorf("output file already exists: %s (use -force to overwrite)", *outPath))
+			} else if !os.IsNotExist(err) {
+				exitErr(fmt.Errorf("stat output: %w", err))
+			}
+		}
 		f, err := os.Create(*outPath)
 		if err != nil {
 			exitErr(fmt.Errorf("create output: %w", err))
