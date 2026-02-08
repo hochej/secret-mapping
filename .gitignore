@@ -1,0 +1,5 @@
+secret-detector-export
+*.exe
+combined-output.json
+gitleaks/
+trufflehog/
