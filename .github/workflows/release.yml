@@ -183,13 +183,7 @@ jobs:
           | gitleaks | [\`${GL_SHA}\`](https://github.com/gitleaks/gitleaks/commit/${GL_SHA}) |
           | trufflehog | [\`${TH_SHA}\`](https://github.com/trufflesecurity/trufflehog/commit/${TH_SHA}) |
 
-          **Stats**
-
-          | | |
-          |--|--|
-          | Total services | ${{ steps.generate.outputs.total_services }} |
-          | Services with hosts | ${{ steps.generate.outputs.services_with_hosts }} |
-          | Total regex rules | ${{ steps.generate.outputs.total_rules }} |"
+          **Stats:** ${{ steps.generate.outputs.total_services }} services, ${{ steps.generate.outputs.services_with_hosts }} with hosts, ${{ steps.generate.outputs.total_rules }} regex rules"
 
           # Dedent (heredoc indentation)
           NOTES=$(echo "$NOTES" | sed 's/^          //')
