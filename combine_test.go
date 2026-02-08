@@ -145,7 +145,7 @@ func TestCombineIntegration(t *testing.T) {
 	thRoot := "../../trufflehog/pkg/detectors"
 	glPath := "../../gitleaks/config/gitleaks.toml"
 
-	thDetectors, _, err := extractTrufflehogDetectors(thRoot)
+	thDetectors, _, _, err := extractTrufflehogDetectors(thRoot, THExtractOptions{})
 	if err != nil {
 		t.Skip("TruffleHog detectors not found:", err)
 	}
@@ -253,7 +253,7 @@ func TestCombineIntegration(t *testing.T) {
 // reasonable keywords (not empty, not too short for major services).
 func TestTHKeywordDerivationCoverage(t *testing.T) {
 	thRoot := "../../trufflehog/pkg/detectors"
-	thDetectors, _, err := extractTrufflehogDetectors(thRoot)
+	thDetectors, _, _, err := extractTrufflehogDetectors(thRoot, THExtractOptions{})
 	if err != nil {
 		t.Skip("TruffleHog detectors not found:", err)
 	}

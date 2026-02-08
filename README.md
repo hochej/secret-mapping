@@ -2,92 +2,46 @@
 
 ![sniffmerge office](assets/2026-02-08-22-36-00-sniffmerge-office.png)
 
-Extracts secret-detection data from [TruffleHog](https://github.com/trufflesecurity/trufflehog) and [Gitleaks](https://github.com/gitleaks/gitleaks) into a single JSON dataset mapping **service keywords → API hosts + regex patterns**.
+Scrappy little tool that mashes [TruffleHog](https://github.com/trufflesecurity/trufflehog) and [Gitleaks](https://github.com/gitleaks/gitleaks) together so you get one JSON with service keywords, API hosts, and regex patterns. Built for [Gondolin](https://github.com/nicholasgasior/gondolin)'s secret-aware env forwarding, but the full dump is there too if you want it.
 
-- **From TruffleHog (AGPL-3.0):** verification hosts only (factual data, no regex patterns copied)
-- **From Gitleaks (MIT):** regex patterns, keywords, entropy thresholds
+TruffleHog gives us the hosts, Gitleaks gives us the regexes. We don't import either project — just read their files as data.
 
-Each entry gets a canonical **keyword** (e.g. `cloudflare`, `stripe`, `github`) derived by stripping credential-type suffixes from both projects' naming conventions. This keyword is what you match against env var names to route secrets.
-
-## Usage
+## Quick start
 
 ```bash
-# Clone the source projects (not included in this repo)
 git clone --depth=1 https://github.com/trufflesecurity/trufflehog.git
 git clone --depth=1 https://github.com/gitleaks/gitleaks.git
 
-# Build and run
 go build -o hogwash .
-./hogwash \
-  -trufflehog ./trufflehog/pkg/detectors/ \
-  -gitleaks ./gitleaks/config/gitleaks.toml \
-  -out combined-output.json
-# add -force to overwrite an existing output file
+
+# slim gondolin export (~47 KB)
+./hogwash -trufflehog ./trufflehog/pkg/detectors/ \
+          -gitleaks ./gitleaks/config/gitleaks.toml \
+          -mode gondolin -out gondolin.json -force
+
+# full dump (~136 KB, everything we extracted)
+./hogwash -trufflehog ./trufflehog/pkg/detectors/ \
+          -gitleaks ./gitleaks/config/gitleaks.toml \
+          -mode full -out full.json -force
 ```
 
-## Output
+CI runs weekly and publishes both as release artifacts.
 
-```
-Total services:       795
-  With hosts+rules:   79 (exact:77 prefix:0 alias:2)
-  Rules only (no host):50
-  Hosts only (no rule):666
-Total GL rules:       221 (147 with hosts)
-```
+## Modes
 
-The JSON contains:
-- **`services[]`** — entries with both regex rules (from Gitleaks) and hosts (from TruffleHog)
-- **`th_only_hosts[]`** — keyword→host mappings for 666 additional services without regex rules
+**`-mode gondolin`** — what `pi-gondolin.ts` actually consumes:
+- `keyword_host_map` — keyword → hosts (substring match on env var names)
+- `exact_name_host_map` — for oddballs like `DD_API_KEY`, `HF_TOKEN`
+- `value_patterns[]` — regexes that detect secrets by value (e.g. `ghp_`, `sk_live_`)
 
-Example entry:
-
-```json
-{
-  "keyword": "cloudflare",
-  "hosts": ["api.cloudflare.com"],
-  "match_type": "exact",
-  "matched_th": ["cloudflareapitoken", "cloudflarecakey", "cloudflareglobalapikey"],
-  "rules": [
-    {
-      "id": "cloudflare-api-key",
-      "regex": "...",
-      "keywords": ["cloudflare"]
-    }
-  ]
-}
-```
-
-## How matching works
-
-TruffleHog uses concatenated directory names (`cloudflareapitoken`), Gitleaks uses hyphenated rule IDs (`cloudflare-api-key`). Both are reduced to a base keyword:
-
-| Source | Raw name | → Keyword |
-|---|---|---|
-| TruffleHog | `cloudflareapitoken` | `cloudflare` |
-| TruffleHog | `datadogtoken` | `datadog` |
-| TruffleHog | `npmtokenv2` | `npm` |
-| Gitleaks | `cloudflare-api-key` | `cloudflare` |
-| Gitleaks | `new-relic-user-api-key` | `newrelic` |
-
-Three strategies in order: exact match, manual alias, prefix match. A small set of overrides handles edge cases (see `keyword.go`).
+**`-mode full`** — everything, including matching metadata, TH-only hosts, GL-only rules.
 
 ## Tests
 
 ```bash
-# Unit tests (always work)
 go test -v ./...
-
-# Integration tests (require cloned repos in ./trufflehog and ./gitleaks)
-# or set:
-#   TRUFFLEHOG_DIR=/path/to/trufflehog/pkg/detectors
-#   GITLEAKS_TOML=/path/to/gitleaks/config/gitleaks.toml
-
-go test -tags=integration -run 'TestCombineIntegration|TestTHKeywordDerivationCoverage' -v
 ```
 
 ## License
 
-This tool is MIT-licensed. It reads TruffleHog and Gitleaks source files as data — it does not link against or import either project.
-
-- Regex patterns in the output originate from **Gitleaks (MIT)** — freely embeddable with attribution
-- Hosts in the output are **factual data** extracted from TruffleHog verification URLs — not copyrightable
+MIT. Gitleaks patterns are MIT-licensed. TruffleHog hosts are factual data.

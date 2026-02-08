@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -19,7 +20,10 @@ type THDetector struct {
 	DirName string   `json:"dir_name"` // original directory name
 	Keyword string   `json:"keyword"`  // derived service keyword
 	Hosts   []string `json:"hosts"`
-	URLs    []string `json:"urls,omitempty"`
+}
+
+type THExtractOptions struct {
+	AllowIPHosts bool
 }
 
 // extractTrufflehogDetectors walks the TruffleHog detectors directory and
@@ -27,14 +31,15 @@ type THDetector struct {
 //
 // IMPORTANT: Only URLs/hosts are extracted (factual data). No regex patterns
 // are extracted to avoid AGPL license contamination.
-func extractTrufflehogDetectors(detectorsRoot string) ([]THDetector, []string, error) {
+func extractTrufflehogDetectors(detectorsRoot string, opts THExtractOptions) ([]THDetector, []string, []error, error) {
 	entries, err := os.ReadDir(detectorsRoot)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	var detectors []THDetector
 	var skipped []string
+	var warnings []error
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -50,25 +55,22 @@ func extractTrufflehogDetectors(detectorsRoot string) ([]THDetector, []string, e
 			continue
 		}
 
-		urls, err := extractURLsFromGoPackage(parseDir)
+		hosts, ws, err := extractHostsFromGoPackage(parseDir, opts)
+		warnings = append(warnings, ws...)
 		if err != nil {
 			skipped = append(skipped, dirName+": "+err.Error())
 			continue
 		}
-
-		hosts := deriveHostsFromURLs(urls)
 		if len(hosts) == 0 {
 			continue
 		}
 
 		sort.Strings(hosts)
-		sort.Strings(urls)
 
 		detectors = append(detectors, THDetector{
 			DirName: dirName,
 			Keyword: deriveKeywordFromTHName(dirName),
 			Hosts:   hosts,
-			URLs:    urls,
 		})
 	}
 
@@ -77,7 +79,7 @@ func extractTrufflehogDetectors(detectorsRoot string) ([]THDetector, []string, e
 	})
 	sort.Strings(skipped)
 
-	return detectors, skipped, nil
+	return detectors, skipped, warnings, nil
 }
 
 var versionDirRe = regexp.MustCompile(`^v(\d+)$`)
@@ -116,37 +118,34 @@ func chooseHighestVersionDir(serviceDir string) (string, error) {
 	return serviceDir, nil
 }
 
-// extractURLsFromGoPackage parses all non-test Go files and extracts URL
-// string literals. Only http(s) URLs are collected; noise is filtered.
-func extractURLsFromGoPackage(dir string) ([]string, error) {
+// extractHostsFromGoPackage parses all non-test Go files and extracts hosts
+// from http(s) URL string literals. Noise is filtered.
+func extractHostsFromGoPackage(dir string, opts THExtractOptions) ([]string, []error, error) {
 	fset := token.NewFileSet()
 
 	pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
 		name := fi.Name()
 		return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
-	}, parser.ParseComments)
+	}, 0)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	seen := map[string]bool{}
-	var urls []string
+	seen := make(map[string]struct{})
+	var hosts []string
+	var warnings []error
 
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Files {
-			commentRanges := buildCommentRanges(fset, file)
-
 			ast.Inspect(file, func(n ast.Node) bool {
 				lit, ok := n.(*ast.BasicLit)
 				if !ok || lit.Kind != token.STRING {
 					return true
 				}
-				if inComment(fset, lit.Pos(), commentRanges) {
-					return true
-				}
 
 				s, err := strconv.Unquote(lit.Value)
 				if err != nil {
+					warnings = append(warnings, fmt.Errorf("%s: unquote string literal %q: %w", fset.Position(lit.Pos()), lit.Value, err))
 					return true
 				}
 
@@ -159,69 +158,25 @@ func extractURLsFromGoPackage(dir string) ([]string, error) {
 
 				pu, err := url.Parse(s)
 				if err != nil {
+					warnings = append(warnings, fmt.Errorf("%s: parse url %q: %w", fset.Position(lit.Pos()), s, err))
 					return true
 				}
-				host := pu.Hostname()
-				if host == "" || isNoiseHost(host) {
+				host := strings.ToLower(pu.Hostname())
+				if host == "" || isNoiseHost(host, opts.AllowIPHosts) {
 					return true
 				}
 
-				norm := pu.String()
-				if !seen[norm] {
-					seen[norm] = true
-					urls = append(urls, norm)
+				if _, ok := seen[host]; !ok {
+					seen[host] = struct{}{}
+					hosts = append(hosts, host)
 				}
+
 				return true
 			})
 		}
 	}
 
-	return urls, nil
-}
-
-type commentRange struct {
-	start, end int
-}
-
-func buildCommentRanges(fset *token.FileSet, file *ast.File) []commentRange {
-	ranges := make([]commentRange, 0, len(file.Comments))
-	for _, cg := range file.Comments {
-		if cg == nil {
-			continue
-		}
-		ranges = append(ranges, commentRange{
-			start: fset.Position(cg.Pos()).Offset,
-			end:   fset.Position(cg.End()).Offset,
-		})
-	}
-	return ranges
-}
-
-func inComment(fset *token.FileSet, pos token.Pos, ranges []commentRange) bool {
-	off := fset.Position(pos).Offset
-	for _, r := range ranges {
-		if off >= r.start && off < r.end {
-			return true
-		}
-	}
-	return false
-}
-
-func deriveHostsFromURLs(urls []string) []string {
-	seen := map[string]bool{}
-	var hosts []string
-	for _, raw := range urls {
-		pu, err := url.Parse(raw)
-		if err != nil {
-			continue
-		}
-		h := strings.ToLower(pu.Hostname())
-		if h != "" && !seen[h] {
-			seen[h] = true
-			hosts = append(hosts, h)
-		}
-	}
-	return hosts
+	return hosts, warnings, nil
 }
 
 func isNoiseURL(u string) bool {
@@ -232,7 +187,7 @@ func isNoiseURL(u string) bool {
 
 var validHostRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$`)
 
-func isNoiseHost(host string) bool {
+func isNoiseHost(host string, allowIPHosts bool) bool {
 	host = strings.ToLower(host)
 	if host == "" {
 		return true
@@ -244,9 +199,12 @@ func isNoiseHost(host string) bool {
 		return true
 	}
 
-	// Reject IP literals and common non-routable ranges to avoid propagating
-	// potentially unsafe verification targets (SSRF in downstream users).
+	// Safe default: no IP literals at all.
 	if ip := net.ParseIP(host); ip != nil {
+		if !allowIPHosts {
+			return true
+		}
+		// Even with allowIPHosts, still block obvious non-routable ranges.
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
 			return true
 		}

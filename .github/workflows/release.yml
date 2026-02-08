@@ -80,21 +80,32 @@ jobs:
         run: go test -v ./...
 
       - name: Build exporter
-        run: go build -o secret-detector-export .
+        run: go build -o hogwash .
 
-      - name: Generate dataset
+      - name: Generate datasets
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
 
-          ./secret-detector-export \
+          # Full export (all data, for exploration/debugging)
+          ./hogwash \
             -trufflehog ./trufflehog/pkg/detectors/ \
             -gitleaks ./gitleaks/config/gitleaks.toml \
-            -out dist/secret-mapping.json \
+            -mode full \
+            -out dist/secret-mapping.full.json \
             -force
 
-          sha256sum dist/secret-mapping.json | awk '{print $1}' > dist/secret-mapping.json.sha256
+          # Gondolin export (slim, for pi-gondolin.ts consumption)
+          ./hogwash \
+            -trufflehog ./trufflehog/pkg/detectors/ \
+            -gitleaks ./gitleaks/config/gitleaks.toml \
+            -mode gondolin \
+            -out dist/secret-mapping.gondolin.json \
+            -force
+
+          sha256sum dist/secret-mapping.full.json     | awk '{print $1}' > dist/secret-mapping.full.json.sha256
+          sha256sum dist/secret-mapping.gondolin.json  | awk '{print $1}' > dist/secret-mapping.gondolin.json.sha256
 
           TH_SHA=$(git -C trufflehog rev-parse HEAD)
           GL_SHA=$(git -C gitleaks rev-parse HEAD)
@@ -120,8 +131,10 @@ jobs:
         with:
           name: secret-mapping-${{ steps.tag.outputs.tag }}
           path: |
-            dist/secret-mapping.json
-            dist/secret-mapping.json.sha256
+            dist/secret-mapping.full.json
+            dist/secret-mapping.full.json.sha256
+            dist/secret-mapping.gondolin.json
+            dist/secret-mapping.gondolin.json.sha256
             dist/metadata.json
 
       - name: Create/update GitHub release + upload assets
@@ -142,7 +155,9 @@ jobs:
           fi
 
           gh release upload "$TAG" \
-            dist/secret-mapping.json \
-            dist/secret-mapping.json.sha256 \
+            dist/secret-mapping.full.json \
+            dist/secret-mapping.full.json.sha256 \
+            dist/secret-mapping.gondolin.json \
+            dist/secret-mapping.gondolin.json.sha256 \
             dist/metadata.json \
             --clobber
