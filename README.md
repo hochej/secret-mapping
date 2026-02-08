@@ -1,5 +1,7 @@
 # secret-detector-export
 
+![sniffmerge office](assets/2026-02-08-22-36-00-sniffmerge-office.png)
+
 Extracts secret-detection data from [TruffleHog](https://github.com/trufflesecurity/trufflehog) and [Gitleaks](https://github.com/gitleaks/gitleaks) into a single JSON dataset mapping **service keywords → API hosts + regex patterns**.
 
 - **From TruffleHog (AGPL-3.0):** verification hosts only (factual data, no regex patterns copied)
@@ -73,13 +75,14 @@ Three strategies in order: exact match, manual alias, prefix match. A small set 
 
 ```bash
 # Unit tests (always work)
-go test -run 'TestDeriveKeyword|TestNormalize|TestNoFalsePositives|TestCombineBasic|TestCombineAlias|TestCombinePrefix|TestCombineMultiple'
-
-# Integration tests (require cloned repos)
-go test -run 'TestCombineIntegration|TestTHKeywordDerivation'
-
-# All
 go test -v ./...
+
+# Integration tests (require cloned repos in ./trufflehog and ./gitleaks)
+# or set:
+#   TRUFFLEHOG_DIR=/path/to/trufflehog/pkg/detectors
+#   GITLEAKS_TOML=/path/to/gitleaks/config/gitleaks.toml
+
+go test -tags=integration -run 'TestCombineIntegration|TestTHKeywordDerivationCoverage' -v
 ```
 
 ## License
